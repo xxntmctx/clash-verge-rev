@@ -11,6 +11,7 @@ import { HttpsProxyAgent } from 'https-proxy-agent'
 import { extract } from 'tar'
 
 import { log_debug, log_error, log_info, log_success } from './utils.mjs'
+import axios from 'axios'
 
 /**
  * Prebuild script with optimization features:
@@ -218,24 +219,10 @@ async function getLatestAlphaVersion() {
       return
     }
   }
-  const options = {}
-  const httpProxy =
-    process.env.HTTP_PROXY ||
-    process.env.http_proxy ||
-    process.env.HTTPS_PROXY ||
-    process.env.https_proxy
-  if (httpProxy) options.agent = new HttpsProxyAgent(httpProxy)
 
   try {
-    const response = await fetch(META_ALPHA_VERSION_URL, {
-      ...options,
-      method: 'GET',
-    })
-    if (!response.ok)
-      throw new Error(
-        `Failed to fetch ${META_ALPHA_VERSION_URL}: ${response.status}`,
-      )
-    META_ALPHA_VERSION = (await response.text()).trim()
+    const response = await axios.get(META_ALPHA_VERSION_URL)
+    META_ALPHA_VERSION = response.data.trim()
     log_info(`Latest alpha version: ${META_ALPHA_VERSION}`)
     await setCachedVersion('META_ALPHA_VERSION', META_ALPHA_VERSION)
   } catch (err) {
@@ -252,22 +239,10 @@ async function getLatestReleaseVersion() {
       return
     }
   }
-  const options = {}
-  const httpProxy =
-    process.env.HTTP_PROXY ||
-    process.env.http_proxy ||
-    process.env.HTTPS_PROXY ||
-    process.env.https_proxy
-  if (httpProxy) options.agent = new HttpsProxyAgent(httpProxy)
 
   try {
-    const response = await fetch(META_VERSION_URL, {
-      ...options,
-      method: 'GET',
-    })
-    if (!response.ok)
-      throw new Error(`Failed to fetch ${META_VERSION_URL}: ${response.status}`)
-    META_VERSION = (await response.text()).trim()
+    const response = await axios.get(META_VERSION_URL)
+    META_VERSION = response.data.trim()
     log_info(`Latest release version: ${META_VERSION}`)
     await setCachedVersion('META_VERSION', META_VERSION)
   } catch (err) {
@@ -319,28 +294,21 @@ function clashMeta() {
 // download helper (增强：status + magic bytes)
 // =======================
 async function downloadFile(url, outPath) {
-  const options = {}
-  const httpProxy =
-    process.env.HTTP_PROXY ||
-    process.env.http_proxy ||
-    process.env.HTTPS_PROXY ||
-    process.env.https_proxy
-  if (httpProxy) options.agent = new HttpsProxyAgent(httpProxy)
-
-  const response = await fetch(url, {
-    ...options,
-    method: 'GET',
-    headers: { 'Content-Type': 'application/octet-stream' },
-  })
-  if (!response.ok) {
-    const body = await response.text().catch(() => '')
-    // 将 body 写到文件以便排查（可通过临时目录查看）
+  let buf
+  try {
+    const response = await axios.get(url, {
+      responseType: 'arraybuffer',
+      httpsAgent: process.env.HTTP_PROXY || process.env.http_proxy || process.env.HTTPS_PROXY || process.env.https_proxy ? new HttpsProxyAgent(process.env.HTTP_PROXY || process.env.http_proxy || process.env.HTTPS_PROXY || process.env.https_proxy) : undefined
+    })
+    buf = Buffer.from(response.data)
+  } catch (err) {
+    const status = err.response ? err.response.status : 'unknown'
+    const body = err.response && err.response.data ? String(err.response.data) : err.message
     await fsp.mkdir(path.dirname(outPath), { recursive: true })
     await fsp.writeFile(outPath, body)
-    throw new Error(`Failed to download ${url}: status ${response.status}`)
+    throw new Error(`Failed to download ${url}: status ${status}, error: ${err.message}`)
   }
 
-  const buf = Buffer.from(await response.arrayBuffer())
   await fsp.mkdir(path.dirname(outPath), { recursive: true })
 
   // 简单 magic 字节检查
@@ -611,29 +579,13 @@ async function getLatestServiceVersion() {
     }
   }
 
-  const options = {}
-  const httpProxy =
-    process.env.HTTP_PROXY ||
-    process.env.http_proxy ||
-    process.env.HTTPS_PROXY ||
-    process.env.https_proxy
-  if (httpProxy) options.agent = new HttpsProxyAgent(httpProxy)
-
   try {
-    const response = await fetch(SERVICE_LATEST_URL, {
-      ...options,
-      method: 'GET',
-      redirect: 'follow',
-    })
-    if (!response.ok)
-      throw new Error(
-        `Failed to fetch ${SERVICE_LATEST_URL}: ${response.status}`,
-      )
-
-    SERVICE_VERSION = parseServiceVersionFromUrl(response.url)
+    const response = await axios.get(SERVICE_LATEST_URL)
+    const finalUrl = response.request.res.responseUrl || response.request.responseURL || response.config.url
+    SERVICE_VERSION = parseServiceVersionFromUrl(finalUrl)
     if (!SERVICE_VERSION)
       throw new Error(
-        `Unable to resolve service release tag from ${response.url}`,
+        `Unable to resolve service release tag from ${finalUrl}`,
       )
 
     log_info(`Latest service version: ${SERVICE_VERSION}`)
